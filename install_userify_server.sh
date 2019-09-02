@@ -1,40 +1,107 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
+set -e
 
-function install_userify(){
+# Variables are set first
 
-export python_requires="cffi ndg-httpsclient pyasn1 python-ldap python-slugify jinja2 shortuuid bottle otpauth qrcode ipwhois netaddr setproctitle py-bcrypt termcolor tomorrow addict pynacl rq boto pyindent spooky redis==2.10.6 pillow emails cryptography paste apache-libcloud service_identity ldaptor"
+## command -v is more bash
+SUDO="$(command -v sudo) --set-home"
+epel_release="https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm"
+export DEBIAN_FRONTEND=noninteractive
+export python_requires="cffi \
+    ndg-httpsclient \
+    pyasn1 \
+    python-ldap \
+    python-slugify \
+    jinja2 \
+    shortuuid \
+    bottle \
+    otpauth \
+    qrcode \
+    ipwhois \
+    netaddr \
+    setproctitle\
+    py-bcrypt \
+    termcolor \
+    tomorrow \
+    addict \
+    pynacl \
+    rq \
+    boto \
+    pyindent \
+    spooky \
+    redis==2.10.6 \
+    pillow \
+    emails \
+    cryptography \
+    paste \
+    apache-libcloud \
+    service_identity \
+    ldaptor"
 
-cat <<- EOF
+warnings() {
+    cat <<- EOF
 
 Userify Server Installer Script
-Copyright (c) 2017 Userify Corporation
+Copyright (c) 2019 Userify Corporation
 Installation instructions:
 https://userify.com/docs/enterprise/installation-enterprise/
+
 EOF
 
-SUDO="$(which sudo) --set-home"
+    # Amazon error goes first, because whats the point of asking for the URL
+    # if they can't even use it??
 
-if [[ ! "$URL" ]]; then
-cat <<- EOF
+    if [[ $(uname -a | grep amzn) ]]; then
+        if [[ ! -f /etc/system-release ]] || [[ ! $(grep "Amazon Linux 2" /etc/system-release) ]]; then
+
+            cat <<- EOF
+Amazon Linux does not support the installation of Redis, so this script does not
+support installation on Amazon Linux.  However, if you install Redis on Amazon
+Linux separately, or if you are using Userify Enterprise with a non-local Redis
+server, then please review this script and install separately. (Be sure to snap
+an AMI afterward.)
+
+Also, if you need additional assistance, or would like a pre-installed Userify
+server published to your AWS account at no additional charge, please contact
+our support team.
+
+Amazon Linux is only supported for the Userify shim and not the server.
+EOF
+            exit 1
+        fi
+    elif [[ $(grep "Ubuntu 14.04" /etc/issue) ]]; then
+        # Error: TLS not supported
+        cat <<- EOF
+Unfortunately, Ubuntu 14.04 LTS does not support newer cryptographic extensions
+for TLS and so is only supported for the Userify shim and not the server.
+
+Please install on at least Ubuntu 16.04 LTS instead.
+EOF
+        exit 1
+    fi
+
+    if [[ ! "$URL" ]]; then
+        cat <<- EOF
 
 TAKE NOTE: This script installs its own Redis Database Server
 
 This script will automatically install a Redis Server Database for a
 single-server installation.
 
-For a multi-server setup or if you are already using a third-party redis
+For a multi-server setup, or if you are already using a third-party redis
 installation, (Elasticache, RedisLabs, etc.) please be sure to remove the
-Redis server instance after this scripts installation completes, as Redis is no
+Redis server instance after this script's installation completes, as Redis is no
 longer required for all installations.
 
 Now, please paste the required URL for your specific Userify server installation.
 EOF
-read -r URL
-fi
+        read -r URL
+    fi
+}
 
 # RHEL/CentOS/AMAZON PREREQUISITES
-# The sudoers fix is due to a long-standing bug in RHEL that will be corrected
-# in RHEL8:
+# The sudoers fix is due to a long-standing bug in RHEL that will be
+# corrected in RHEL8:
 # https://bugzilla.redhat.com/show_bug.cgi?id=1020147
 
 #
@@ -43,99 +110,97 @@ fi
 # full redis server with client hiredis.x86_64
 #
 
-if [[ $(uname -a | grep amzn) ]]; then
-    if [[ ! -f /etc/system-release ]] || [[ ! $(grep "Amazon Linux 2" /etc/system-release) ]]; then
-        cat <<- EOF
-Amazon Linux does not support installation of Redis, so this script does not
-support installation on Amazon Linux.  However, if you install Redis on Amazon
-Linux separately, or if you are using Userify Enterprise with a non-local Redis
-server, then please review this script and install separately. (Be sure to snap
-an AMI afterward.) Also, if you need additional assistance, or would like a
-pre-installed Userify server published to your AWS account at no additional
-charge, please contact support.
-
-Amazon Linux is only supported for the Userify shim and not the server.
-EOF
-        exit 1
-    fi
-fi
-
-if [[ $(grep "Ubuntu 14.04" /etc/issue) ]]; then
-    # Error: TLS not supported
-    cat <<- EOF
-Unfortunately, Ubuntu 14.04 LTS does not support newer cryptographic extensions
-for TLS and so is only supported for the Userify shim and not the server.
-Please install on Ubuntu 16.04 LTS instead.
-EOF
-    exit 1
-fi
-
-epel_release=https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
-
 # RHEL/CentOS PREREQUISITES
-function rhel_prereqs {
+rhel_prereqs() {
     echo "Installing RHEL/CentOS/Amazon Prerequisites"
     set +e
-    $SUDO pkill ntpd # this aborts next line on Amazon
+    "${SUDO}" pkill ntpd # this aborts next line on Amazon
     # Annoying behavior of RHEL: error status if 'nothing to do'
-    $SUDO yum install -q -y python-devel libffi-devel openssl-devel libxml2-devel \
-        gcc gcc-c++ libxslt-devel openldap-devel cyrus-sasl-devel libjpeg-devel \
+    "${SUDO}" yum install -q -y \
+        python-devel libffi-devel openssl-devel libxml2-devel gcc gcc-c++ \
+        libxslt-devel openldap-devel cyrus-sasl-devel libjpeg-devel \
         ntp ntpdate ntp-doc
-    $SUDO ntpdate pool.ntp.org
+
+    "${SUDO}" ntpdate pool.ntp.org
+
     set +e
-    $SUDO chkconfig --add ntpd
-    $SUDO chkconfig ntpd on
+
+    "${SUDO}" chkconfig --add ntpd
+    "${SUDO}" chkconfig ntpd on
+
     set -e
-    $SUDO service ntpd start
-    curl -# "https://bootstrap.pypa.io/get-pip.py" | $SUDO /usr/bin/env python
+
+    "${SUDO}" service ntpd start
+    curl -# "https://bootstrap.pypa.io/get-pip.py" | \
+        "${SUDO}" /usr/bin/env python
+
     set +e
-    $SUDO yum install -q -y $epel_release
+
+    "${SUDO}" yum install -q -y "${epel_release}"
+
     set -e
 
     # Redis installation fails on Amazon Linux 1 due to missing systemd,
     # but works fine on Amazon Linux 2
     if [ -f /usr/bin/amazon-linux-extras ]; then
-        $SUDO amazon-linux-extras install redis4.0
+        "${SUDO}" amazon-linux-extras install redis4.0
     else
-        $SUDO yum install -q -y --enablerepo=epel redis && \
-            $SUDO chkconfig redis on && \
-            $SUDO sed -i "s/Defaults requiretty/# &/" /etc/sudoers && \
-            $SUDO service redis start
+        "${SUDO}" yum install -q -y --enablerepo=epel redis && \
+            "${SUDO}" chkconfig redis on && \
+            "${SUDO}" sed -i "s/Defaults requiretty/# &/" /etc/sudoers && \
+            "${SUDO}" service redis start
+
         set +e
-        $SUDO systemctl enable redis
+
+        "${SUDO}" systemctl enable redis
     fi
 }
 
 # DEBIAN/UBUNTU PREREQUISITES
-function debian_prereqs {
+debian_prereqs() {
     echo "Installing Debian/Ubuntu Prerequisites"
-    export DEBIAN_FRONTEND=noninteractive
+
     # this is necessary because it's too old; fetch from pip instead:
-    sudo apt-get --purge remove python-cryptography
-    $SUDO apt-get update
+    "${SUDO}" apt-get --purge remove python-cryptography
+    "${SUDO}" apt-get update
+
     set +e
+
     # this might get skipped
-    $SUDO DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
-         -qqy upgrade
+    "${SUDO}" DEBIAN_FRONTEND=noninteractive \
+        apt-get -o Dpkg::Options::="--force-confdef" \
+        -o Dpkg::Options::="--force-confold" \
+        -qqy upgrade
+
     set -e
-    $SUDO DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
-         install -qqy build-essential python-dev libffi-dev zlib1g-dev \
-    libjpeg-dev libssl-dev python-lxml libxml2-dev libldap2-dev libsasl2-dev \
-    libxslt1-dev redis-server ntpdate curl
+    "${SUDO}" DEBIAN_FRONTEND=noninteractive \
+        apt-get -o Dpkg::Options::="--force-confdef" \
+        -o Dpkg::Options::="--force-confold" \
+        install -qqy \
+            build-essential python-dev libffi-dev zlib1g-dev \
+            libjpeg-dev libssl-dev python-lxml libxml2-dev libldap2-dev \
+            libsasl2-dev libxslt1-dev redis-server ntpdate curl
+
     # get immediate timefix
     set +e
-    $SUDO ntpdate pool.ntp.org
-    $SUDO DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
+    "${SUDO}" ntpdate pool.ntp.org
+    "${SUDO}" DEBIAN_FRONTEND=noninteractive \
+        apt-get -o Dpkg::Options::="--force-confdef" \
+        -o Dpkg::Options::="--force-confold" \
         install -qqy ntp
-    curl -# "https://bootstrap.pypa.io/get-pip.py" | $SUDO -H /usr/bin/env python
+
+    curl -# "https://bootstrap.pypa.io/get-pip.py" | \
+        "${SUDO}" -H /usr/bin/env python
+
     set -e
-    python_requires="$python_requires pyopenssl"
+    python_requires="${python_requires} pyopenssl"
 }
 
-
-$SUDO which yum 2>/dev/null && rhel_prereqs
-$SUDO which apt-get 2>/dev/null && debian_prereqs
-
+if [[ $(command -v yum) ]]; then
+    rhel_prereqs;
+elif [[ "$(command -v apt-get)" ]]; then
+    debian_prereqs
+fi
 
 # ALL DISTRIBUTIONS
 
@@ -143,18 +208,16 @@ $SUDO which apt-get 2>/dev/null && debian_prereqs
 # userify-server upon first startup, but doing this first helps catch any
 # first-start issues.
 
-set -e
-PATH="/usr/local/bin/:/usr/local/sbin/:$PATH"
-pip=$(which pip)
+PATH="/usr/local/bin/:/usr/local/sbin/:${PATH}"
+PIP="$(command -v pip)"
 
-$SUDO $pip install --compile --upgrade $python_requires
+"${SUDO}" "${PIP}" install --compile --upgrade "${python_requires}"
 
 set +e
 # some distributions may already have this installed in a distribution package,
 # causing pip installation to fail.
-$SUDO $pip install --compile --upgrade requests
+"${SUDO}" "${PIP}" install --compile --upgrade requests
 set -e
-
 
 # OLD Python versions (python <= 2.5) also need ssl installed:
 # (it's built in on python 2.6 and later.)
@@ -162,18 +225,20 @@ set -e
 # However, we do not officially support distributions
 # that are that old for the server.
 
+userify_server() {
+
 if [[ ! -d  /opt/userify-server ]]; then
-    $SUDO mkdir /opt/userify-server
-    $SUDO chown "$(whoami )" /opt/userify-server/
+    "${SUDO}" mkdir /opt/userify-server
+    "${SUDO}" chown "$(whoami )" /opt/userify-server/
 fi
 
 # This will always overwrite the existing userify-server file with a new copy
 # A basic "update/upgrade"
 
 if [[ -f /opt/userify-server/userify-server ]]; then
-    $SUDO rm /opt/userify-server/userify-server
+    "${SUDO}" rm /opt/userify-server/userify-server
 fi
-curl -# "$URL" | gunzip > /opt/userify-server/userify-server
+curl -# "${URL}" | gunzip > /opt/userify-server/userify-server
 chmod +x  /opt/userify-server/userify-server
 
 cat << "EOF" > userify-server-init
@@ -225,15 +290,19 @@ case "$1" in
 esac
 EOF
 
-$SUDO mv userify-server-init /etc/init.d/userify-server
+"${SUDO}" mv userify-server-init /etc/init.d/userify-server
 chmod +x /etc/init.d/userify-server
+
 if [ -f /usr/sbin/chkconfig ]; then
+
     set +e
-    $SUDO chkconfig --add userify-server
-    $SUDO chkconfig userify-server on
+    "${SUDO}" chkconfig --add userify-server
+    "${SUDO}" chkconfig userify-server on
     set -e
+
+elif [ -f /usr/sbin/update-rc.d ]; then
+    "${SUDO}" update-rc.d userify-server defaults
 fi
-[ -f /usr/sbin/update-rc.d ] && $SUDO update-rc.d userify-server defaults
 
 cat << "EOF" > userify-start
 #!/bin/bash
@@ -249,7 +318,6 @@ ulimit -n 1048576
 # recommended for local Redis:
 /sbin/sysctl vm.overcommit_memory=1
 echo never > /sys/kernel/mm/transparent_hugepage/enabled
-
 
 (while true;
 do
@@ -272,12 +340,15 @@ do
 done) &
 EOF
 
-$SUDO mv userify-start /opt/userify-server/userify-start
+"${SUDO}" mv userify-start /opt/userify-server/userify-start
 
-$SUDO chmod 755 /etc/init.d/userify-server /opt/userify-server/userify-server /opt/userify-server/userify-start
+"${SUDO}" chmod 755 \
+    /etc/init.d/userify-server \
+    /opt/userify-server/userify-server \
+    /opt/userify-server/userify-start
 
 if [ -d /etc/logrotate.d ]; then
-    cat <<EOF | $SUDO tee /etc/logrotate.d/userify-server >/dev/null
+    cat <<EOF | "${SUDO}" tee /etc/logrotate.d/userify-server >/dev/null
 # Userify Server log rotation
 /var/log/userify-server.log {
     daily
@@ -293,26 +364,25 @@ else
     echo "for your distribution, or email support@userify.com for assistance."
 fi
 
-[ -f /usr/sbin/update-rc.d ] && $SUDO update-rc.d userify-server defaults
+[ -f /usr/sbin/update-rc.d ] && "${SUDO}" update-rc.d userify-server defaults
 set +e
 # Debian/Ubuntu:
-$SUDO which systemctl && $SUDO systemctl --quiet enable redis-server
+"${SUDO}" which systemctl && "${SUDO}" systemctl --quiet enable redis-server
 # RHEL/Centos:
-$SUDO which systemctl && $SUDO systemctl --quiet enable redis
-$SUDO which systemctl && $SUDO systemctl --quiet enable userify-server
-$SUDO which systemctl && $SUDO systemctl --quiet start redis-server
-$SUDO which systemctl && $SUDO systemctl --quiet start redis
-$SUDO which systemctl && $SUDO systemctl --quiet start userify-server
- 
+"${SUDO}" which systemctl && "${SUDO}" systemctl --quiet enable redis
+"${SUDO}" which systemctl && "${SUDO}" systemctl --quiet enable userify-server
+"${SUDO}" which systemctl && "${SUDO}" systemctl --quiet start redis-server
+"${SUDO}" which systemctl && "${SUDO}" systemctl --quiet start redis
+"${SUDO}" which systemctl && "${SUDO}" systemctl --quiet start userify-server
+
 set -e
 
-$SUDO /opt/userify-server/userify-start 2>&1 |$SUDO tee /var/log/userify-server.log >/dev/null &
+"${SUDO}" /opt/userify-server/userify-start 2>&1 | \
+    "${SUDO}" tee /var/log/userify-server.log >/dev/null &
 
 sleep 1
 
 cat << "EOF" | more
-
-
 
 Welcome to Userify!       INSTALLATION COMPLETE
 
@@ -351,6 +421,6 @@ if you have any questions.
 That's it! Thanks for installing Userify!
 EOF
 }
+}
 
-install_userify
-
+userify_server
